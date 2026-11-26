@@ -316,6 +316,8 @@ for every platform.
 
 | Problem | What to do |
 |---|---|
+| `No module named …` / "Missing Python packages" | `python -m pip install -r requirements.txt` in the bot folder (`start_bot.bat` does it automatically) |
+| Folder inside OneDrive | Works (file locks are retried), but better outside OneDrive, e.g. `C:\controller-bot` – OneDrive syncing the Excel/state files every few minutes adds locks and noise |
 | "Waiting for Chrome…" | Open Chrome with the profile that has the extension; check its badge says **on** |
 | `config.js is missing` | `python run_bot.py --install-extension`, then reload the extension in `chrome://extensions` |
 | A bot tab was closed by accident | Nothing to do – before each step the bot checks its tabs and reopens a missing one (logins live in the Chrome profile) |

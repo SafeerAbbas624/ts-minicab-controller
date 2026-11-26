@@ -22,6 +22,24 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+SETUP_PROBLEM = 3   # exit code: start_bot.bat stops and explains instead of restarting
+
+
+def check_packages() -> None:
+    """Clear message instead of a traceback when the Python packages are not installed."""
+    import importlib.util
+    need = {"openpyxl": "openpyxl", "yaml": "PyYAML", "websockets": "websockets", "tzdata": "tzdata"}
+    missing = [pkg for mod, pkg in need.items() if importlib.util.find_spec(mod) is None]
+    if missing:
+        print(f"\nMissing Python packages: {', '.join(missing)}\n"
+              f"Install them once (in this folder):\n"
+              f"    python -m pip install -r requirements.txt\n"
+              f"(start_bot.bat does this automatically.)\n")
+        raise SystemExit(SETUP_PROBLEM)
+
+
+check_packages()
+
 from bot.config import load_config  # noqa: E402
 
 
@@ -131,4 +149,12 @@ Then start the bot:  python run_bot.py --dry-run --once""")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        code = main()
+    except SystemExit as e:
+        if isinstance(e.code, str):   # a setup problem with a message (missing config, token, ...)
+            print(f"\n{e.code}\n")
+            code = SETUP_PROBLEM
+        else:
+            code = e.code
+    raise SystemExit(code)

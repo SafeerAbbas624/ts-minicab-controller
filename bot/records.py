@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -68,9 +69,19 @@ class Records:
         return {"jobs": {}, "emails": {}, "posts": {}, "alerts": {}, "logged": {}}
 
     def save_state(self) -> None:
+        """Write state.json safely (write a temp file, then swap it in). Retries for a few
+        seconds if another program (OneDrive, antivirus, backup) briefly locks the file."""
         tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.state, indent=1, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.state_path)
+        data = json.dumps(self.state, indent=1, ensure_ascii=False)
+        for attempt in range(10):
+            try:
+                tmp.write_text(data, encoding="utf-8")
+                tmp.replace(self.state_path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.5)
 
     def job(self, ref: str) -> dict:
         return self.state["jobs"].setdefault(ref, {"ref": ref, "status": "seen"})
