@@ -298,6 +298,8 @@ for every platform.
 |---|---|
 | "Waiting for Chrome…" | Open Chrome with the profile that has the extension; check its badge says **on** |
 | `config.js is missing` | `python run_bot.py --install-extension`, then reload the extension in `chrome://extensions` |
+| A bot tab was closed by accident | Nothing to do – before each step the bot checks its tabs and reopens a missing one (logins live in the Chrome profile) |
+| Chrome was closed | A PC popup says the controller is paused; open Chrome again with the same profile and it carries on by itself |
 | A site keeps saying logged out | Log in again in the bot's Chrome window; the bot carries on by itself |
 | A WhatsApp group "NOT found" | Names must match exactly – run `--list-chats` and copy the name |
 | Something looks wrong | `records/bot.log`, the `error` rows in Excel and `records/screenshots/` |

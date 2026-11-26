@@ -179,7 +179,18 @@ class Controller:
             if hasattr(self.browser, "bridge"):
                 # keep the same bridge server; just wait for the extension and re-find the tabs
                 from .bridge import wait_for_extension
-                wait_for_extension(self.browser.bridge)
+                bridge = self.browser.bridge
+                if not bridge.wait_connected(20):
+                    # Chrome itself was closed: nothing can run (not even WhatsApp alerts).
+                    self.records.event("chrome_closed", reason="Chrome / the bridge extension is gone – "
+                                                               "waiting for Chrome to be opened again")
+                    self.records.flush()
+                    desktop_alert("TS Minicab – Chrome closed",
+                                  "Chrome was closed, so the controller is paused (no bids, no posts).\n"
+                                  "Open Chrome again with the bot's profile – it carries on by itself.")
+                    t0 = time.time()
+                    wait_for_extension(bridge)
+                    self.records.event("chrome_back", details=f"Chrome back after {(time.time() - t0) / 60:.0f} min")
                 time.sleep(5)
                 enabled = [p.name for p in self.platforms]
                 self.browser.tabs.clear()
