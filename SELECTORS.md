@@ -82,6 +82,28 @@ page** – accepted jobs arrive by email only.
 
 ## 2. Titan mail — https://hostinger.titan.email/mail/
 
+### How the bot reads mail: Titan's local mailbox copy (IndexedDB)
+Titan keeps a synced copy of the mailbox in the browser – IndexedDB database
+`Titan-<account id>`, stores:
+
+| store | used for |
+|---|---|
+| `Message` | one record per email: `id`, `subject`, `from` (list of `{email, name}`), `date` (ms), `unread`, `folder_id`, `thread_id` |
+| `MessageBody` | `{id, value}` – the email's HTML, present once Titan has downloaded it (opened once) |
+| `Category` | folders: `{id, name}` – inbox, archive, spam, trash, sent, drafts, scheduled |
+
+The bot lists OTS emails from `Message` (all folders except spam/trash/sent/drafts/
+scheduled) and reads the text from `MessageBody`, turning the HTML into lines (table cells
+separated by a tab). This works while the window is covered or hidden. Only an email whose
+text isn't stored yet is opened in the page (row click; if the row isn't drawn, search for
+its subject with the window in front) – Titan then stores the text.
+
+Why not the search box: when Chrome's window is covered, Titan doesn't draw its search
+results reliably (live test 26 Nov 2026: about 1 round in 10 failed). After pressing
+Enter the page shows "Search Results" with 0 rows for ~0.8 s before the real results.
+
+The page itself (used only to open an email and to check the login):
+
 | what | selector |
 |---|---|
 | logged in | `div.list-rows` present; URL stays on `/mail/` |
@@ -104,6 +126,9 @@ page** – accepted jobs arrive by email only.
 | `Job Confirmation - OTS-…` | job assigned to us; button `Confirm And View Details` | **post** to all groups (never clicks confirm) |
 | `Job Re-Confirmation - OTS-…` | customer changed the booking; button `Re-Confirm And View Details` | **alert** contacts (configurable: also re-post) |
 | `Forthcoming Journeys (Correct as of …)` | digest | ignore |
+
+Airport pickups use **`Flight Landing:`** instead of `Pick Up:` in Job Confirmations –
+the bot accepts both (and otherwise the first `Label: place` line under `Route`).
 
 Job Confirmation body (key lines):
 ```

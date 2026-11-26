@@ -337,8 +337,6 @@ class Controller:
         self.mail.refresh()
         if not self.site_ok("Email", self.mail.login_state):
             return
-        listed = self.browser.js(
-            "return [...document.querySelectorAll('div.list-rows div.list-item')].length") or 0
         rows = self.mail.ots_rows()
         handled = R.state["emails"]
         now_s = now_uk().strftime("%Y-%m-%d %H:%M")
@@ -367,9 +365,7 @@ class Controller:
         self.stats["ots_emails"] += len(rows)
         self.stats["emails_new"] += len(todo)
         R.event("email_round", platform="OTS",
-                details=f"{listed} emails listed " + ("after search" if getattr(self.mail, "search_ok", True)
-                                                      else "(SEARCH FAILED – plain inbox)") +
-                        f", {len(rows)} OTS booking/availability emails, "
+                details=f"{self.mail.source_info}, {len(rows)} OTS booking/availability emails, "
                         f"{len(todo)} new to handle ({sum(r['unread'] for r in todo)} unread)")
         for row in todo:
             mail = self.mail.read(row, restore_unread=self.dry_run and row["unread"])

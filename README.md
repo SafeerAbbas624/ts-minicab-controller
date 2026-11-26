@@ -50,7 +50,8 @@ Every round (default: every 2 minutes):
      bid    £Y − 3
    Every decision is logged once, with its reason.
 
-3. Titan – search the OTS sender and handle every OTS email not handled yet
+3. Titan – read Titan's own local copy of the mailbox (works even when the window is
+   hidden behind others) and handle every OTS email not handled yet
    (unread, or already opened by someone on a phone) from the last 3 days:
      Journey Availability Request -> WhatsApp alert to your alert numbers
                                      + post the job to all groups (price = quoted − £15)
@@ -215,7 +216,8 @@ The same lines go to `records/bot.log`. The per-job lines are console/log only; 
 record gets one row per real event.
 
 What a **dry run** touches: OTS – opens each job to read it (OTS marks it "viewed");
-Titan – opens unhandled OTS emails and marks unread ones unread again; WhatsApp – only
+Titan – opens an unhandled OTS email only if Titan hasn't downloaded its text yet, and
+marks unread ones unread again; WhatsApp – only
 checks the groups exist, never opens a chat or types.
 
 ---

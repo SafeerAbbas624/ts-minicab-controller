@@ -1,5 +1,5 @@
 """Titan webmail (hostinger.titan.email). See SELECTORS.md section 2.
-Reads unread OTS emails. Never clicks any link inside an email."""
+Reads OTS emails from Titan's local mailbox copy. Never clicks any link inside an email."""
 from __future__ import annotations
 
 import hashlib
@@ -9,22 +9,67 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .timeutil import parse_ots_time
+from .timeutil import UK, parse_ots_time
 
 log = logging.getLogger(__name__)
 
 SEL_SEARCH = '.advance-thread-search-bar [contenteditable="true"]'
 
-JS_ROWS = """
-return [...document.querySelectorAll('div.list-rows div.list-item')].slice(0, arguments[0]).map((it, i) => ({
-  i,
-  unread: !!it.querySelector('span.unread-true'),
-  sender: ((it.querySelector('.list-column-Participants') || {}).innerText || '').trim(),
-  subject: ((it.querySelector('span.subject') || {}).innerText || '').trim(),
-  date: ((it.querySelector('.list-column-Date') || {}).innerText || '').trim(),
-}));
+# ---------------------------------------------------------------- Titan's local mailbox copy
+# Titan keeps a synced copy of the mailbox in the browser (IndexedDB "Titan-<account id>":
+# stores Message, MessageBody, Category). Reading it does not depend on what the page draws,
+# so it also works while the Chrome window is covered / hidden.
+JS_IDB_LIST = r"""
+const sender = arguments[0];
+const dbName = (await indexedDB.databases()).map(d => d.name).find(n => /^Titan-\d+$/.test(n || ''));
+if (!dbName) return {ok: false, why: 'no Titan mailbox database in this browser'};
+const db = await new Promise((res, rej) => { const r = indexedDB.open(dbName); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+try {
+  const get = (s, m, k) => new Promise((res, rej) => { const q = db.transaction(s, 'readonly').objectStore(s)[m](k);
+                                                      q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+  const cats = await get('Category', 'getAll');
+  const nm = c => String(c.name || c.display_name || '').toLowerCase();
+  const skip = new Set(cats.filter(c => /^(spam|trash|sent|drafts|scheduled)$/.test(nm(c))).map(c => String(c.id)));
+  const inbox = cats.find(c => nm(c) === 'inbox');
+  const bodies = new Set(await get('MessageBody', 'getAllKeys'));
+  const msgs = await get('Message', 'getAll');
+  const rows = msgs.filter(m => !skip.has(String(m.folder_id)) && JSON.stringify(m.from || '').toLowerCase().includes(sender))
+    .map(m => ({id: m.id, subject: m.subject || '', date_ms: m.date, unread: !!m.unread,
+                folder: String(m.folder_id), hasBody: bodies.has(m.id)}));
+  return {ok: true, db: dbName, total: msgs.length, rows,
+          sync: inbox && inbox.sync_progress ? inbox.sync_progress.status : '',
+          newest: msgs.reduce((a, m) => Math.max(a, m.date || 0), 0)};
+} finally { db.close(); }
 """
 
+# Email text from the local copy, turned into lines like the page shows them
+# (table cells separated by a tab), or null if Titan has not downloaded it yet.
+JS_IDB_BODY = r"""
+const id = arguments[0];
+const dbName = (await indexedDB.databases()).map(d => d.name).find(n => /^Titan-\d+$/.test(n || ''));
+if (!dbName) return null;
+const db = await new Promise((res, rej) => { const r = indexedDB.open(dbName); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+let v;
+try {
+  v = await new Promise((res, rej) => { const q = db.transaction('MessageBody', 'readonly').objectStore('MessageBody').get(id);
+                                        q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+} finally { db.close(); }
+if (!v || !v.value) return null;
+const doc = new DOMParser().parseFromString(String(v.value), 'text/html');
+doc.querySelectorAll('style,script,head,title').forEach(e => e.remove());
+const BLOCK = /^(P|DIV|TR|TABLE|TBODY|H[1-6]|LI|UL|OL|SECTION|CENTER|HEADER|FOOTER|BLOCKQUOTE)$/;
+const walk = n => {
+  if (n.nodeType === 3) return n.textContent.replace(/[ \t\r\n ]+/g, ' ');
+  if (n.nodeType !== 1) return '';
+  if (n.tagName === 'BR') return '\n';
+  let s = ''; for (const c of n.childNodes) s += walk(c);
+  if (n.tagName === 'TD' || n.tagName === 'TH') return s.trim() + '\t';
+  return BLOCK.test(n.tagName) ? '\n' + s.trim() + '\n' : s;
+};
+return walk(doc.body).split('\n').map(l => l.replace(/\t+$/, '').trim()).join('\n').replace(/\n{3,}/g, '\n\n');
+"""
+
+# ---------------------------------------------------------------- page (only to open an email)
 JS_OPEN = """
 const subj = arguments[0];
 const it = [...document.querySelectorAll('div.list-rows div.list-item')]
@@ -33,16 +78,6 @@ if (!it) return false;
 it.scrollIntoView({block: 'center'});
 (it.querySelector('.list-column-Message') || it).click();
 return true;
-"""
-
-JS_BODY = """
-for (const f of document.querySelectorAll('iframe')) {
-  try {
-    const t = f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText;
-    if (t && t.includes(arguments[0])) return t;
-  } catch (e) {}
-}
-return null;
 """
 
 JS_MARK_UNREAD = """
@@ -68,6 +103,10 @@ class OTSEmail:
 
 
 class TitanMail:
+    """Finds OTS emails in Titan's local mailbox copy (works with the window hidden) and
+    reads their text from it. Only an email Titan has not downloaded yet is opened in the
+    page (newest emails are at the top of the inbox); if its row is not on screen, the
+    search box is used with the window brought to the front."""
     tab_name = "email"
 
     def __init__(self, browser, cfg: dict):
@@ -79,6 +118,7 @@ class TitanMail:
                                            ("reconfirmation", "reconfirmation_subjects"),
                                            ("availability", "availability_subjects"))
                          for p in self.ecfg.get(key, [])]
+        self.source_info = ""
 
     def login_state(self) -> str:
         b = self.browser
@@ -92,43 +132,13 @@ class TitanMail:
         """)
 
     def refresh(self) -> None:
+        """Reload the inbox: Titan syncs new mail into its local copy on load."""
         b = self.browser
         b.tab(self.tab_name)
-        b._get(self.cfg["urls"]["email"])   # back to the Inbox, clears any search
+        b._get(self.cfg["urls"]["email"])
         b.wait_for(lambda: self.login_state() != "loading", timeout=45)
         b.wait_for(lambda: b.js("return document.querySelectorAll('div.list-rows div.list-item').length"), timeout=20)
-        self.search_ok = True
-        if self.ecfg.get("use_search", True):
-            self.search_ok = self._search(self.ecfg["sender_contains"])
-            if not self.search_ok:
-                # A covered (hidden) Chrome window sometimes doesn't draw Titan's search
-                # results: bring it to the front, reload and search once more.
-                log.info("Titan search did not show results – bringing the window forward and retrying")
-                b.show()
-                b._get(self.cfg["urls"]["email"])
-                b.wait_for(lambda: b.js("return document.querySelectorAll('div.list-rows div.list-item').length"),
-                           timeout=20)
-                self.search_ok = self._search(self.ecfg["sender_contains"])
-                if not self.search_ok:
-                    log.warning("Titan search failed twice – scanning the plain inbox this round "
-                                "(missed emails are picked up later: 3-day lookback)")
-
-    def _search(self, text: str) -> bool:
-        """Type the sender into Titan's search so only OTS emails are listed
-        (the inbox is busy with other senders). True if the search results appeared."""
-        b = self.browser
-        if not b.click_js("return document.querySelector(arguments[0]);", SEL_SEARCH):
-            return False
-        b.press("SelectAll")
-        b.press("Backspace")
-        b.insert_text(text)
-        b.press("Enter")
-        sender = text.lower()
-        return bool(b.wait_for(lambda: b.js("""
-            const rows = [...document.querySelectorAll('div.list-rows div.list-item')].slice(0, 5);
-            return rows.length > 0 && rows.every(r => ((r.querySelector('.list-column-Participants') || {}).innerText || '')
-                   .toLowerCase().includes(arguments[0]) || /Search Results/.test(document.body.innerText));
-        """, sender), timeout=20))
+        time.sleep(2)  # let the background sync write the newest mail
 
     def classify(self, subject: str) -> tuple[str, str] | None:
         for kind, rx in self.patterns:
@@ -138,31 +148,61 @@ class TitanMail:
         return None
 
     def ots_rows(self) -> list[dict]:
-        """All listed OTS booking / availability / re-confirmation emails, read AND unread
-        (someone may have opened one on a phone before the bot saw it). Each row has
-        unread, subject, kind, ref, date (Titan's date column) and day (a date or None)."""
-        rows = self.browser.js(JS_ROWS, self.ecfg.get("max_rows_to_scan", 60)) or []
+        """All OTS booking / availability / re-confirmation emails in the mailbox (not spam,
+        trash, sent or drafts), read AND unread. Each row: id, subject, kind, ref, unread,
+        date (UK text), day (UK date), hasBody."""
+        res = self.browser.js(JS_IDB_LIST, self.ecfg["sender_contains"].lower()) or {}
+        if not res.get("ok"):
+            self.source_info = f"LOCAL COPY NOT AVAILABLE ({res.get('why', 'unknown')})"
+            log.warning("Titan local mailbox not readable: %s", res.get("why"))
+            return []
+        newest = datetime.fromtimestamp(res["newest"] / 1000, UK).strftime("%d %b %H:%M") if res.get("newest") else "?"
+        self.source_info = (f"{res['total']} emails in Titan's local copy (sync {res.get('sync') or '?'}, "
+                            f"newest {newest} UK)")
         out = []
-        for r in rows:
-            if self.ecfg["sender_contains"].lower() not in r["sender"].lower():
-                continue
+        for r in res["rows"]:
             c = self.classify(r["subject"])
-            if c:
-                r["kind"], r["ref"] = c
-                r["day"] = parse_list_date(r["date"])
-                out.append(r)
+            if not c:
+                continue
+            when = datetime.fromtimestamp((r["date_ms"] or 0) / 1000, UK)
+            r.update(kind=c[0], ref=c[1], day=when.date(), date=when.strftime("%Y-%m-%d %H:%M"))
+            out.append(r)
+        out.sort(key=lambda r: r["date_ms"] or 0, reverse=True)
         return out
 
-    def read(self, row: dict, restore_unread: bool) -> OTSEmail | None:
-        """Open one email and parse it. Opening marks it read; restore_unread puts it back."""
+    def _open_in_page(self, row: dict) -> bool:
+        """Open one email so Titan downloads it. Newest emails are in the plain inbox list;
+        otherwise search for the subject with the window in front."""
         b = self.browser
-        if not b.js(JS_OPEN, row["subject"]):
-            return None
-        body = b.wait_for(lambda: b.js(JS_BODY, row["ref"]), timeout=20, every=0.5)
+        b.tab(self.tab_name)
+        if b.js(JS_OPEN, row["subject"]):
+            return True
+        log.info("email %r is not in the visible inbox list – searching for it", row["subject"])
+        b.show()
+        if b.click_js("return document.querySelector(arguments[0]);", SEL_SEARCH):
+            b.press("SelectAll")
+            b.press("Backspace")
+            b.insert_text(row["subject"])
+            b.press("Enter")
+            return bool(b.wait_for(lambda: b.js(JS_OPEN, row["subject"]), timeout=20, every=1))
+        return False
+
+    def read(self, row: dict, restore_unread: bool) -> OTSEmail | None:
+        """Text of one OTS email: from the local copy, opening it first if Titan has not
+        downloaded it yet (opening marks it read; restore_unread puts it back)."""
+        b = self.browser
+        body = b.js(JS_IDB_BODY, row["id"]) if row.get("hasBody") else None
+        opened = False
         if not body:
-            log.warning("email body for %s did not load", row["subject"])
+            if not self._open_in_page(row):
+                log.warning("could not open %r", row["subject"])
+                return None
+            opened = True
+            body = b.wait_for(lambda: b.js(JS_IDB_BODY, row["id"]), timeout=25, every=1)
+        if not body or row["ref"] not in body:
+            log.warning("email text for %r did not load", row["subject"])
             return None
-        if restore_unread:
+        if opened and restore_unread:
             time.sleep(0.5)
             if not b.js(JS_MARK_UNREAD):
                 log.warning("could not mark %r unread again", row["subject"])
@@ -207,17 +247,25 @@ def _f(rx, text, flags=0):
 def parse_body(kind: str, body: str) -> dict:
     f: dict = {}
     if kind in ("booking", "reconfirmation"):
-        f["pickup"] = _f(r"Pick Up:\s*([^\n]+)", body)
-        f["dropoff"] = _f(r"Drop Off:\s*([^\n]+)", body)
-        f["vehicle"] = _f(r"Vehicle\s*\t?\s*([^\n]+)", body)
-        f["starting_text"] = _f(r"Starting\s*\t?\s*([^\n]+)", body)
+        # Airport pickups say "Flight Landing: Gatwick Airport, North Terminal" instead of
+        # "Pick Up:"; otherwise take the first "Label: place" line under "Route".
+        f["pickup"] = _f(r"(?:Pick Up|Pickup|Flight Landing|Collection|Train Arrival|Ship Arrival)\s*:\s*([^\n\t]+)",
+                         body, re.I)
+        if not f["pickup"]:
+            m = re.search(r"Route\s*\n+\s*([A-Za-z][A-Za-z ]{2,30}):\s*([^\n\t]+)", body)
+            if m and "drop" not in m.group(1).lower():
+                f["pickup"] = m.group(2).strip()
+        f["pickup_label"] = (re.search(r"Route\s*\n+\s*([A-Za-z][A-Za-z ]{2,30}):", body) or [None, ""])[1]
+        f["dropoff"] = _f(r"Drop Off:\s*([^\n\t]+)", body)
+        f["vehicle"] = _f(r"Vehicle\s*\t?\s*([^\n\t]+)", body)
+        f["starting_text"] = _f(r"Starting\s*\t?\s*([^\n\t]+)", body)
         f["starting"] = parse_ots_time(f["starting_text"])
         total = _f(r"Total\s*\t?\s*" + MONEY, body)
         f["total"] = float(total.replace(",", "")) if total else None
         quoted = _f(r"quotation of " + MONEY, body)
         f["quoted"] = float(quoted.replace(",", "")) if quoted else None
         if kind == "reconfirmation":
-            ch = _f(r"Amended Details:\s*\n(.+?)\n\s*\n\s*\n", body, re.S)
+            ch = _f(r"Amended Details:\s*(.+?)\n\s*OTS-\d", body, re.S)
             f["changes"] = ", ".join(l.strip() for l in ch.splitlines() if l.strip())
     elif kind == "availability":
         quoted = _f(r"recently quoted " + MONEY, body)

@@ -29,6 +29,7 @@ def check(name, got, want):
 class FakeMail:
     def __init__(self, rows, bodies):
         self.rows, self.bodies, self.opened = rows, bodies, []
+        self.source_info = "fake inbox"
 
     def refresh(self): pass
     def login_state(self): return "in"

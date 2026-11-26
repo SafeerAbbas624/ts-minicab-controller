@@ -119,6 +119,17 @@ def main() -> int:
     r2 = dict(rules, skip_vehicles=["8 Seater Minibus"])
     check("skip_vehicles", precheck(dj, r2, now), "vehicle '8 Seater Minibus' is in skip_vehicles")
 
+    fl = parse_body("booking", BOOKING.replace("Pick Up: 2 Sample Street, Chelmsford, CM1 1AA",
+                                               "Flight Landing: Gatwick Airport, North Terminal")
+                                       .replace("Drop Off: Gatwick Airport, North Terminal",
+                                                "Drop Off: 4 Example Close, Sevenoaks, TN13 1AA"))
+    check("airport pickup ('Flight Landing:')", (fl["pickup"], fl["dropoff"]),
+          ("Gatwick Airport, North Terminal", "4 Example Close, Sevenoaks, TN13 1AA"))
+    tabbed = parse_body("booking", "Route\n\nPick Up: A Place, X1 1AA\n\nDrop Off: B Place, Y1 1AA\n\n"
+                                   "Vehicle\t Saloon Car\n\nStarting\t Friday 20th November 2026, 22:45pm\n\nTotal\t £44.00\n")
+    check("text from local copy (tabs)", (tabbed["vehicle"], tabbed["total"], tabbed["starting"]),
+          ("Saloon Car", 44.0, datetime(2026, 11, 20, 22, 45, tzinfo=UK)))
+
     f = parse_body("booking", BOOKING)
     check("email fields", (f["pickup"], f["dropoff"], f["vehicle"], f["total"]),
           ("2 Sample Street, Chelmsford, CM1 1AA", "Gatwick Airport, North Terminal", "Saloon Car", 88.0))
