@@ -1,0 +1,17 @@
+# Private / machine-specific - never commit
+# Excel log, events, state.json, screenshots (emails, chats)
+records/
+# Selenium-mode Chrome profile (logins)
+chrome-profile/
+# bridge token - made per PC by: python run_bot.py --install-extension
+chrome-extension/config.js
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Your real settings (phone numbers, WhatsApp groups) - copy config.example.yaml to config.yaml
+config.yaml
+# Internal business notes
+OPEN_QUESTIONS.md

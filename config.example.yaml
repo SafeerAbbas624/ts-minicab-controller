@@ -1,0 +1,169 @@
+# TS Minicab controller bot – settings.
+# Copy this file to config.yaml and fill in your own values.
+# config.yaml is private (not in git): it holds your phone numbers and groups.
+# After editing, restart the bot (Ctrl+C, then start it again).
+
+# true  = look at everything and log what it WOULD do; never bids, never posts.
+# false = really bids on OTS and really posts to WhatsApp.
+# The command line flags --dry-run / --live override this.
+dry_run: true
+
+# Seconds to wait between rounds (refresh OTS + bid, check email + post).
+loop_interval_seconds: 120
+
+# All rule times are UK time, whatever the PC clock or time zone is.
+timezone: Europe/London
+
+chrome:
+  # extension = work inside your normal, already logged-in Chrome profile through the
+  #             "TS Minicab Bot Bridge" extension (no separate login needed).
+  #             The bot opens its own window in that Chrome. Setup: README "Use your own Chrome".
+  # selenium  = start a separate Chrome with its own profile folder (settings below).
+  mode: extension
+  bridge_port: 8765
+  # ---- selenium mode only ----
+  binary: 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+  # Chrome 136+ refuses automation on its normal "User Data" folder, so the bot runs
+  # its own copy. --setup-profile copies your logged-in Chrome profile
+  # here once. If a site is not logged in there, the bot asks you to log in and waits.
+  user_data_dir: 'chrome-profile'
+  profile_directory: 'Default'      # e.g. 'Profile 1'
+  source_user_data_dir: 'C:\Users\YOUR-NAME\AppData\Local\Google\Chrome\User Data'
+  page_load_timeout_seconds: 60
+
+urls:
+  ots: 'https://suppliers.ots-system.net/'
+  whatsapp: 'https://web.whatsapp.com/'
+  email: 'https://hostinger.titan.email/mail/'
+
+# ---------------------------------------------------------------- bidding
+bidding:
+  ots:
+    enabled: true
+    # Bid only if pickup is at least this many hours from now (UK time). E.g. 24, 12 or 6.
+    # After changing any rule here, restart the bot: it re-checks jobs it skipped before.
+    min_hours_before_pickup: 24
+    # Bid only if OTS says "This route is roughly N miles" and N <= this.
+    max_miles: 80
+    # OTS shows "we are expecting prices between £X and £Y". Bid = £Y - this.
+    bid_below_max_guide: 3
+    # Skip when the job page has no price guide or no miles line (never guess).
+    skip_if_no_price_guide: true
+    skip_if_no_miles: true
+    # Vehicle types to never bid on, exactly as OTS writes them, e.g.
+    #   skip_vehicles: ['8 Seater Minibus', 'Executive Car']
+    # Empty = bid on every vehicle type.
+    skip_vehicles: []
+    # Safety: never bid below this, and at most this many bids per round.
+    min_bid: 10
+    max_bids_per_round: 30
+    # Close each job's tab in the OTS top bar after reading it (keeps the page light).
+    close_job_tabs: true
+
+# ---------------------------------------------------------------- email
+email:
+  # Only unread emails from this sender are looked at.
+  sender_contains: 'Onward Travel Solutions'
+  # Regexes on the subject. The first (...) group must capture the OTS job reference.
+  booking_subjects:            # -> post to all WhatsApp groups
+    - '^Job Confirmation - (OTS-[\d-]+)'
+  reconfirmation_subjects:     # customer changed the booking -> alert contacts
+    - '^Job Re-Confirmation - (OTS-[\d-]+)'
+  availability_subjects:       # we were picked, answer "Available" within ~30 min -> alert contacts
+    - '^Journey Availability Request - (OTS-[\d-]+)'
+  # Availability Request: besides alerting the 2 numbers, also post the job to all groups
+  # straight away (built from the details saved when the bot bid; price = quoted - price_minus).
+  # The Job Confirmation that follows is then not posted again.
+  post_on_availability: true
+  # Re-confirmations: also re-post the amended job to all groups?
+  repost_reconfirmations: false
+  # The bot NEVER clicks "View And Respond", "Confirm And View Details" or
+  # "Re-Confirm And View Details". You confirm by hand.
+  # Emails already opened by someone (phone, office) still count: the bot handles any OTS
+  # availability / booking / re-confirmation email it has not handled yet, read or unread,
+  # received in the last lookback_days days. Its memory stops anything being done twice,
+  # and it never posts or alerts a job whose pickup (or answer deadline) has passed.
+  lookback_days: 3
+  # Search Titan for the sender each round (the inbox is busy with Taxicode etc.,
+  # so OTS emails can be far down the list). false = scan the plain inbox.
+  use_search: true
+  # How many rows to scan each round (newest first).
+  max_rows_to_scan: 60
+
+# ---------------------------------------------------------------- WhatsApp
+whatsapp:
+  # Exact group names as WhatsApp shows them (fancy fonts and emoji matter).
+  # `python run_bot.py --list-chats` prints all your chat names.
+  groups:
+    - 'Example Group 1'
+    - 'Example Group 2'
+    - 'Example Group 3'
+
+  # Who gets alerts (Availability Requests, Re-Confirmations, login problems, errors).
+  # phone = international number, digits only, no + or spaces. This is what counts:
+  # the bot types it into WhatsApp search, clicks the person under "Chat", and before
+  # sending checks the number in that chat's contact info is exactly this one (saved
+  # names differ from phone to phone, so names are not checked). If search or the check
+  # fails it opens web.whatsapp.com/send?phone=<number> and checks again; still no match
+  # = not sent. name = only a label for the Excel record.
+  alert_contacts:
+    - name: 'Owner'
+      phone: '447000000001'
+    - name: 'Office'
+      phone: '447000000002'
+
+  # Seconds to wait between two group posts (be gentle with WhatsApp).
+  seconds_between_posts: 4
+
+# ---------------------------------------------------------------- post format
+post:
+  # Price in the post = OTS total minus this (e.g. OTS £88 -> "£73 NET").
+  price_minus: 15
+  # Vehicle line: the vehicle exactly as OTS states it (Saloon Car, Executive Car...).
+  vehicle_source: ots
+  # Drive line: "ABOUT 64 MILES" from the OTS job page (blank if the bot never saw the job).
+  show_miles: true
+  miles_line: 'ABOUT {miles} MILES'
+  payment_line: 'POB PAYMENT'
+  # Day word in the header, by UK pickup time:
+  #   today before morning_until      -> "TODAY MORNING"
+  #   today before tonight_from       -> "TODAY"
+  #   today from tonight_from         -> "TONIGHT"
+  #   tomorrow                        -> "TOMORROW"
+  #   later                           -> weekday, e.g. "SUNDAY"
+  morning_until: '12:00'
+  tonight_from: '18:00'
+  # Template. Fields: {day_word} {date} {time} {pickup} {dropoff} {vehicle} {price} {miles_line} {payment_line} {ref}
+  # Lines that end up empty (e.g. no miles) are dropped.
+  template: |
+    🚨 {day_word} {date} AT {time} 🚨
+
+    	PICK UP • {pickup}
+
+    	DROP OFF •  {dropoff}
+
+     {vehicle}
+
+    £{price} NET
+     {payment_line}
+
+    {miles_line}
+
+  availability_alert_template: |
+    ⏰ OTS AVAILABILITY REQUEST {ref}
+    You quoted £{quoted}. Answer "Available" before {expires} (UK).
+    Open the email "Journey Availability Request - {ref}" and click View And Respond.
+
+  reconfirmation_alert_template: |
+    ⚠️ OTS RE-CONFIRMATION {ref}
+    Customer changed: {changes}
+    {pickup} -> {dropoff}, {when} (UK), £{total}
+    Open the email and click Re-Confirm And View Details.
+
+# ---------------------------------------------------------------- records
+records:
+  folder: 'records'          # relative = inside the bot folder (folder can be moved/copied)
+  # One workbook, one sheet per UK day (e.g. 2026-11-26), plus a "Job status" sheet.
+  workbook: 'controller_log.xlsx'
+  state_file: 'state.json'
+  screenshot_errors: true

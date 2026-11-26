@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "TS Minicab Bot Bridge",
+  "version": "1.0.0",
+  "description": "Lets the TS Minicab controller bot (python run_bot.py on this PC) work in this Chrome profile's tabs.",
+  "minimum_chrome_version": "116",
+  "permissions": ["debugger", "tabs", "alarms", "storage"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "TS Minicab Bot Bridge" }
+}
