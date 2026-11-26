@@ -130,7 +130,7 @@ Then start the bot:  python run_bot.py --dry-run --once""")
     dry_run = True if a.dry_run else False if a.live else bool(cfg.get("dry_run", True))
     if not dry_run and not a.yes:
         print("LIVE MODE: the bot will place REAL bids on OTS and send REAL WhatsApp posts/alerts.")
-        if input("Type LIVE to continue: ").strip() != "LIVE":
+        if input("Type LIVE to continue: ").strip().upper() != "LIVE":
             print("Not started.")
             return 1
     logging.getLogger(__name__).info("starting – %s mode", "DRY-RUN" if dry_run else "LIVE")
