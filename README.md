@@ -196,6 +196,24 @@ python run_bot.py --selftest             # offline tests, nothing opened or sent
 
 Stop with **Ctrl+C**.
 
+### What the window shows
+
+Every line starts with the UK time. Important events are coloured (green = bid placed /
+message sent, magenta = OTS email, red = problem), and each round ends with a summary:
+
+```
+21:43:34  BOT STARTED    LIVE (real bids and posts) | rules: pickup >= 24 h, <= 80 mi, bid = top of guide - 3 | 25 WhatsApp groups, 2 alert numbers | every 120 s
+21:49:52  OTS LIST       OTS                         5 jobs in the Unresponded list
+21:49:52    - OTS-…-85690-1   Fri 27 Nov 14:55 | Gatwick Airport, North Terminal -> Dartford | Saloon Car | skip: pickup in 17.1 h (< 24 h)
+21:49:52    - OTS-…-261-1     Thu 24 Dec 12:45 | Chislehurst -> Winchester | Executive Car | skip: 89 miles (> 80)
+20:02:29  BID PLACED     OTS-…-70129-1  £80.00 | Sat 05 Dec 09:20 | Portsmouth -> Gatwick Airport | Saloon Car | 67 mi | OTS guide £70.00-£83.00 | OTS: price box gone
+21:49:56  EMAIL CHECK    OTS                         37 emails listed after search, 8 OTS booking/availability emails, 0 new to handle
+21:49:56  ROUND 3 DONE (LIVE) | OTS: 5 jobs listed, 0 bid, 0 failed, 5 skipped, 0 already bid | Email: 8 OTS emails, 0 new | WhatsApp: 0 posted, 0 alerts, 0 waiting | errors: 0 | took 8s, next round 21:51:48 UK
+```
+
+The same lines go to `records/bot.log`. The per-job lines are console/log only; the Excel
+record gets one row per real event.
+
 What a **dry run** touches: OTS – opens each job to read it (OTS marks it "viewed");
 Titan – opens unhandled OTS emails and marks unread ones unread again; WhatsApp – only
 checks the groups exist, never opens a chat or types.

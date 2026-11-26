@@ -160,10 +160,12 @@ def main() -> int:
     h = k32.CreateFileW(str(xlsx), 0x80000000, 0x1, None, 3, 0x80, None)   # read, share READ only
     try:
         R.event("excel_lock_test", details="written while the file was open")
+        R.flush()                                   # end of a round: save fails, row waits
         check("Excel open: row kept waiting", len(R._pending), 1)
     finally:
         k32.CloseHandle(ctypes.c_void_p(h))
     R.event("excel_lock_test", details="after closing")
+    R.flush()                                       # next round: both rows written
     from openpyxl import load_workbook
     ws = load_workbook(xlsx)[now.strftime("%Y-%m-%d")]
     got = [r[3] for r in ws.iter_rows(values_only=True)].count("excel_lock_test")

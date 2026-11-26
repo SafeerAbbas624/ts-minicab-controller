@@ -97,28 +97,38 @@ class TitanMail:
         b._get(self.cfg["urls"]["email"])   # back to the Inbox, clears any search
         b.wait_for(lambda: self.login_state() != "loading", timeout=45)
         b.wait_for(lambda: b.js("return document.querySelectorAll('div.list-rows div.list-item').length"), timeout=20)
+        self.search_ok = True
         if self.ecfg.get("use_search", True):
-            self._search(self.ecfg["sender_contains"])
+            self.search_ok = self._search(self.ecfg["sender_contains"])
+            if not self.search_ok:
+                # A covered (hidden) Chrome window sometimes doesn't draw Titan's search
+                # results: bring it to the front, reload and search once more.
+                log.info("Titan search did not show results – bringing the window forward and retrying")
+                b.show()
+                b._get(self.cfg["urls"]["email"])
+                b.wait_for(lambda: b.js("return document.querySelectorAll('div.list-rows div.list-item').length"),
+                           timeout=20)
+                self.search_ok = self._search(self.ecfg["sender_contains"])
+                if not self.search_ok:
+                    log.warning("Titan search failed twice – scanning the plain inbox this round "
+                                "(missed emails are picked up later: 3-day lookback)")
 
-    def _search(self, text: str) -> None:
+    def _search(self, text: str) -> bool:
         """Type the sender into Titan's search so only OTS emails are listed
-        (the inbox is busy with other senders). Falls back to the plain inbox."""
+        (the inbox is busy with other senders). True if the search results appeared."""
         b = self.browser
         if not b.click_js("return document.querySelector(arguments[0]);", SEL_SEARCH):
-            log.warning("Titan search box not found – scanning the inbox instead")
-            return
+            return False
         b.press("SelectAll")
         b.press("Backspace")
         b.insert_text(text)
         b.press("Enter")
         sender = text.lower()
-        ok = b.wait_for(lambda: b.js("""
+        return bool(b.wait_for(lambda: b.js("""
             const rows = [...document.querySelectorAll('div.list-rows div.list-item')].slice(0, 5);
             return rows.length > 0 && rows.every(r => ((r.querySelector('.list-column-Participants') || {}).innerText || '')
                    .toLowerCase().includes(arguments[0]) || /Search Results/.test(document.body.innerText));
-        """, sender), timeout=20)
-        if not ok:
-            log.warning("Titan search results did not appear – scanning whatever is listed")
+        """, sender), timeout=20))
 
     def classify(self, subject: str) -> tuple[str, str] | None:
         for kind, rx in self.patterns:

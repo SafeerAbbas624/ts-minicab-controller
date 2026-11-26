@@ -8,7 +8,8 @@ import re
 import time
 import traceback
 import uuid
-from datetime import date, datetime
+from collections import Counter
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import formatter
@@ -42,6 +43,7 @@ class Controller:
             wb, st = wb.replace(".xlsx", "_DRYRUN.xlsx"), st.replace(".json", ".dryrun.json")
         self.records = Records(rc["folder"], wb, st, dry_run)
         self.records.state.setdefault("outbox", [])
+        self.stats: Counter = Counter()
         self.browser: BaseBrowser | None = None
         self.platforms = []
         self.mail = self.wa = None
@@ -54,8 +56,14 @@ class Controller:
         self.platforms = [PLATFORMS[n](self.browser, self.cfg, self.records) for n in enabled]
         self.mail = TitanMail(self.browser, self.cfg)
         self.wa = WhatsApp(self.browser, self.cfg)
-        self.records.event("bot_started", details=f"platforms={[p.name for p in self.platforms]} "
-                                                  f"dry_run={self.dry_run}")
+        r = self.cfg["bidding"].get("ots", {})
+        self.records.event("bot_started", details=(
+            f"{'DRY RUN (nothing real)' if self.dry_run else 'LIVE (real bids and posts)'} | platforms "
+            f"{[p.name for p in self.platforms]} | rules: pickup >= {r.get('min_hours_before_pickup')} h, "
+            f"<= {r.get('max_miles')} mi, bid = top of guide - {r.get('bid_below_max_guide')} | "
+            f"{len(self.cfg['whatsapp']['groups'])} WhatsApp groups, "
+            f"{len(self.cfg['whatsapp'].get('alert_contacts', []))} alert numbers | "
+            f"every {self.cfg.get('loop_interval_seconds', 120)} s"))
         self.check_rules_changed()
         self.ensure_logged_in()
         self.check_groups()
@@ -162,16 +170,33 @@ class Controller:
                 self.records.event("error", reason=f"{type(e).__name__}: {e}"[:300],
                                    details=traceback.format_exc()[-1500:] + (f"\nscreenshot: {shot}" if shot else ""))
             self.records.flush()
+            wait = max(5, interval - (time.time() - started))
+            if stop_at:
+                wait = min(wait, max(0, stop_at - time.time()))
+            self.round_summary(time.time() - started, None if once else wait)
             if once:
                 return
             if stop_at and time.time() >= stop_at:
                 self.records.event("bot_stopped", details=f"time limit of {minutes:g} min reached")
+                self.records.flush()
                 return
-            wait = max(5, interval - (time.time() - started))
-            if stop_at:
-                wait = min(wait, max(0, stop_at - time.time()))
-            log.info("round done – next in %.0f s", wait)
             time.sleep(wait)
+
+    def round_summary(self, took: float, wait: float | None) -> None:
+        """One clear line per round in the console (and bot.log)."""
+        st, c = getattr(self, "stats", Counter()), self.records.round_counts
+        self.rounds = getattr(self, "rounds", 0) + 1
+        now = now_uk()
+        nxt = f"next round {(now + timedelta(seconds=wait)):%H:%M:%S} UK" if wait is not None else "stopping"
+        mode = "DRY RUN" if self.dry_run else "LIVE"
+        text = (f"{now:%H:%M:%S}  ROUND {self.rounds} DONE ({mode}) | OTS: {st['jobs']} jobs listed, "
+                f"{st['bid']} bid, {st['bid_failed']} failed, {st['skip']} skipped, {st['already']} already bid"
+                f" | Email: {st['ots_emails']} OTS emails, {st['emails_new']} new"
+                f" | WhatsApp: {c['whatsapp_post']} posted, {c['whatsapp_alert']} alerts, "
+                f"{len(self.records.state.get('outbox', []))} waiting"
+                f" | errors: {c['error']} | took {took:.0f}s, {nxt}")
+        log.info(text, extra={"colour": "[1m" + ("[91m" if c["error"] or st["bid_failed"] else "[92m")})
+        log.info("-" * 100, extra={"colour": "[2m"})
 
     def _restart_browser(self) -> None:
         if self.browser:
@@ -201,6 +226,8 @@ class Controller:
         self.start()
 
     def run_round(self) -> None:
+        self.stats = Counter()
+        self.records.round_counts.clear()
         if self.only in (None, "bid"):
             for p in self.platforms:
                 self.bid_round(p)
@@ -217,6 +244,7 @@ class Controller:
         jobs = p.list_jobs()
         now = now_uk()
         rules = p.rules
+        self.stats["jobs"] += len(jobs)
         R.event("bid_round", platform=p.name.upper(), details=f"{len(jobs)} jobs in the Unresponded list")
         bids = 0
         for job in jobs:
@@ -231,12 +259,18 @@ class Controller:
                 if not self.dry_run and st.get("status") == "bid" and R.once(f"still|{job.ref}"):
                     R.event("bid_not_registered", **base, bid=st.get("bid"),
                             reason="job is still in 'Unresponded' after our bid – check OTS by hand")
+                self.stats["already"] += 1
+                self._job_line(job, f"already bid £{st.get('bid')} ({st.get('status')})", "[92m")
                 continue
             if st.get("skip_permanent") or st.get("gave_up"):
+                self.stats["skip"] += 1
+                self._job_line(job, f"skip: {st.get('reason', '')}")
                 continue
             reason = precheck(job, rules, now)
             if reason:
                 self._skip(job, base, reason)
+                self.stats["skip"] += 1
+                self._job_line(job, f"skip: {reason}")
                 continue
             if bids >= rules.get("max_bids_per_round", 30):
                 if R.once(f"defer|{job.ref}|{now:%Y%m%d%H}"):
@@ -251,12 +285,15 @@ class Controller:
             decision, reason, amount = decide(job, rules, now)
             if decision == "skip":
                 self._skip(job, base, reason)
+                self.stats["skip"] += 1
+                self._job_line(job, f"skip: {reason}")
                 p.cleanup(job)
                 continue
             result = p.place_bid(job, amount, self.dry_run)
             event = ("bid_dry_run" if self.dry_run else "bid_placed") if result.ok else "bid_failed"
             R.event(event, **base, bid=amount, decision="bid" if result.ok else "failed", reason=reason,
                     details=result.message + (f" | screenshot: {result.screenshot}" if result.screenshot else ""))
+            self.stats["bid" if result.ok else "bid_failed"] += 1
             if result.ok:
                 bids += 1
                 R.update_job(job.ref, status="bid", bid=amount, bid_time=now.strftime("%Y-%m-%d %H:%M"),
@@ -273,6 +310,13 @@ class Controller:
                     p.cleanup(job)
                     break
             p.cleanup(job)
+
+    def _job_line(self, job, what: str, colour: str = "[2m") -> None:
+        """Console-only line per job per round (not written to Excel)."""
+        when = job.pickup.strftime("%a %d %b %H:%M") if job.pickup else job.pickup_text
+        route = f"{(job.origin or '')[:40]} -> {(job.destination or '')[:40]}"
+        log.info(f"{now_uk():%H:%M:%S}    - {job.ref:<27} {when} | {route} | {job.vehicle} | {what}",
+                 extra={"colour": colour})
 
     def _skip(self, job, base, reason) -> None:
         R = self.records
@@ -320,8 +364,12 @@ class Controller:
             if not r["unread"] and (r["day"] is None or (today - r["day"]).days > lookback):
                 continue  # read and old (or undated): leave it
             todo.append(r)
+        self.stats["ots_emails"] += len(rows)
+        self.stats["emails_new"] += len(todo)
         R.event("email_round", platform="OTS",
-                details=f"{listed} emails listed after search, {len(rows)} OTS booking/availability emails, "
+                details=f"{listed} emails listed " + ("after search" if getattr(self.mail, "search_ok", True)
+                                                      else "(SEARCH FAILED – plain inbox)") +
+                        f", {len(rows)} OTS booking/availability emails, "
                         f"{len(todo)} new to handle ({sum(r['unread'] for r in todo)} unread)")
         for row in todo:
             mail = self.mail.read(row, restore_unread=self.dry_run and row["unread"])

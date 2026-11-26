@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .console import format_event
 from .timeutil import now_uk
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,8 @@ class Records:
         self.state_path = self.folder / state_file
         self.dry_run = dry_run
         self._pending: list[dict] = []     # rows waiting because Excel had the file open
+        self._excel_locked = False
+        self.round_counts: Counter = Counter()
         self._lock = threading.Lock()
         self.state = self._load_state()
 
@@ -98,12 +102,17 @@ class Records:
             "platform": platform, "event": event, "dry_run": "yes" if self.dry_run else "no",
         }
         row.update({k: ("" if v is None else v) for k, v in f.items()})
-        log.info("%s %s %s %s", event, f.get("ref", ""), f.get("decision", ""), f.get("reason", ""))
+        text, colour = format_event(row)
+        log.info(text, extra={"colour": colour})
+        self.round_counts[event] += 1
         with self.jsonl.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
         with self._lock:
             self._pending.append(row)
-            self.flush()
+            # Excel is saved once per round by the controller (saving the whole workbook on
+            # every event gets slow as it grows); a safety save every 50 rows.
+            if len(self._pending) >= 50:
+                self.flush()
 
     def flush(self) -> None:
         if not self._pending:
@@ -118,10 +127,15 @@ class Records:
                 ws.append([row.get(k, "") for k in _EVENT_KEYS])
             self._write_status(wb)
             wb.save(self.xlsx)
+            if self._excel_locked:
+                log.info("Excel file closed again – %d waiting rows written to %s", len(self._pending), self.xlsx.name)
+                self._excel_locked = False
             self._pending.clear()
         except PermissionError:
-            log.warning("Excel file is open in another program – %d rows will be written later "
-                        "(they are already in events.jsonl)", len(self._pending))
+            if not self._excel_locked:
+                log.warning("Excel file is open in another program – new rows wait and are written when it "
+                            "is closed (they are already in events.jsonl). This message is shown once.")
+                self._excel_locked = True
 
     @staticmethod
     def _header(ws, cols):

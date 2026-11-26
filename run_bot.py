@@ -34,8 +34,9 @@ def setup_logging(folder: str) -> None:
                                               encoding="utf-8")
     fh.setFormatter(fmt)
     root.addHandler(fh)
+    from bot.console import ConsoleFormatter, enable_colours
     sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
+    sh.setFormatter(ConsoleFormatter(enable_colours()))
     root.addHandler(sh)
     logging.getLogger("selenium").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
