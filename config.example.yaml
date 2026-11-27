@@ -45,8 +45,9 @@ bidding:
     min_hours_before_pickup: 24
     # Bid only if OTS says "This route is roughly N miles" and N <= this.
     max_miles: 80
-    # OTS shows "we are expecting prices between £X and £Y". Bid = £Y - this.
-    bid_below_max_guide: 3
+    # OTS shows "we are expecting prices between £X and £Y".
+    # Bid = £Y + bid_adjust:  -3 = £3 below the top,  +15 = £15 above,  0 = exactly £Y.
+    bid_adjust: -3
     # Skip when the job page has no price guide or no miles line (never guess).
     skip_if_no_price_guide: true
     skip_if_no_miles: true

@@ -47,7 +47,7 @@ Every round (default: every 2 minutes):
      skip   if pickup is less than 24 h away (UK time)
      skip   if the route is more than 80 miles
      skip   if OTS shows no "we are expecting prices between £X and £Y"
-     bid    £Y − 3
+     bid    £Y + bid_adjust (default −3)
    Every decision is logged once, with its reason.
 
 3. Titan – read Titan's own local copy of the mailbox (works even when the window is
@@ -168,7 +168,7 @@ changed bidding rules and re-checks jobs it skipped under the old rules.
 | `loop_interval_seconds` | `120` | time between rounds |
 | `bidding.ots.min_hours_before_pickup` | `24` | only bid this many hours (or more) before pickup – e.g. 12 or 6 |
 | `bidding.ots.max_miles` | `80` | only bid on routes up to this distance |
-| `bidding.ots.bid_below_max_guide` | `3` | bid = top of OTS's price range minus this |
+| `bidding.ots.bid_adjust` | `-3` | bid = top of OTS's price range **plus** this: `-3` = £3 below, `+15` = £15 above, `0` = the top itself (older configs: `bid_below_max_guide: 3` = £3 below) |
 | `bidding.ots.skip_vehicles` | `[]` | vehicle types never to bid on, e.g. `['8 Seater Minibus']` |
 | `bidding.ots.min_bid` / `max_bids_per_round` | `10` / `30` | safety limits |
 | `email.lookback_days` | `3` | handle OTS emails up to this old, read or unread |

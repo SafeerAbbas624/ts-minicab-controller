@@ -17,7 +17,7 @@ from .browser import BaseBrowser, BrowserLost, desktop_alert, make_browser
 from .email_titan import TitanMail
 from .platforms import PLATFORMS
 from .records import Records
-from .rules import decide, precheck
+from .rules import decide, describe_adjustment, precheck
 from .timeutil import fmt_uk, now_uk
 from .whatsapp import WhatsApp
 
@@ -60,7 +60,7 @@ class Controller:
         self.records.event("bot_started", details=(
             f"{'DRY RUN (nothing real)' if self.dry_run else 'LIVE (real bids and posts)'} | platforms "
             f"{[p.name for p in self.platforms]} | rules: pickup >= {r.get('min_hours_before_pickup')} h, "
-            f"<= {r.get('max_miles')} mi, bid = top of guide - {r.get('bid_below_max_guide')} | "
+            f"<= {r.get('max_miles')} mi, bid = top of guide {describe_adjustment(r)} | "
             f"{len(self.cfg['whatsapp']['groups'])} WhatsApp groups, "
             f"{len(self.cfg['whatsapp'].get('alert_contacts', []))} alert numbers | "
             f"every {self.cfg.get('loop_interval_seconds', 120)} s"))

@@ -104,6 +104,16 @@ def main() -> int:
     job.miles, job.guide_min, job.guide_max = 64, 103.0, 121.0
     d, _, amount = decide(job, rules, now)
     check("bid = max - 3", (d, amount), ("bid", 118.0))
+    import yaml
+    for text, want in (("bid_adjust: +15", 136.0), ("bid_adjust: 15", 136.0), ("bid_adjust: -3", 118.0),
+                       ("bid_adjust: 0", 121.0), ("bid_below_max_guide: 3", 118.0),
+                       ("bid_below_max_guide: -15", 136.0)):
+        r3 = {k: v for k, v in rules.items() if k not in ("bid_adjust", "bid_below_max_guide")}
+        r3.update(yaml.safe_load(text))
+        check(f"config '{text}' -> bid", decide(job, r3, now)[2], want)
+    r4 = dict(rules, bid_adjust=15, bid_below_max_guide=3)
+    check("bid_adjust wins over the old setting", decide(job, r4, now)[2], 136.0)
+    check("reason shows + 15", decide(job, r4, now)[1].endswith("-> £121.00 + 15"), True)
     job.miles = 81
     check("skip > 80 miles", decide(job, rules, now)[0], "skip")
     job.miles, job.guide_max = 80, None

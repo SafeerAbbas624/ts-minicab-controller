@@ -37,11 +37,25 @@ def decide(job: Job, rules: dict, now: datetime) -> tuple[str, str, float | None
         return "skip", f"{job.miles:g} miles (> {rules['max_miles']})", None
     if job.guide_max is None:
         return "skip", "no 'expecting prices between £X and £Y' on the job", None
-    bid = round(job.guide_max - rules["bid_below_max_guide"], 2)
+    adj = bid_adjustment(rules)
+    bid = round(job.guide_max + adj, 2)
     if bid < rules.get("min_bid", 0):
         return "skip", f"bid £{bid:.2f} below safety minimum £{rules.get('min_bid')}", None
     if job.extra.get("has_fare_box") is False:
         return "skip", "no price box (already quoted?)", None
     miles = f"{job.miles:g} mi" if job.miles is not None else "miles n/a"
     return "bid", (f"pickup in {hours:.1f} h, {miles}, guide £{job.guide_min:.2f}-£{job.guide_max:.2f} "
-                   f"-> £{job.guide_max:.2f} - {rules['bid_below_max_guide']}"), bid
+                   f"-> £{job.guide_max:.2f} {describe_adjustment(rules)}"), bid
+
+
+def bid_adjustment(rules: dict) -> float:
+    """Pounds added to the top of OTS's price range: `bid_adjust: +15` = £15 above,
+    `bid_adjust: -3` = £3 below. Older configs: `bid_below_max_guide: 3` = £3 below."""
+    if rules.get("bid_adjust") is not None:
+        return float(rules["bid_adjust"])
+    return -float(rules.get("bid_below_max_guide", 0))
+
+
+def describe_adjustment(rules: dict) -> str:
+    adj = bid_adjustment(rules)
+    return f"{'+' if adj >= 0 else '-'} {abs(adj):g}"
